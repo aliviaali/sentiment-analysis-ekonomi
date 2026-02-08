@@ -69,11 +69,11 @@ stemmer, stopwords = load_sastrawi()
 @st.cache_resource
 def load_models():
     try:
-        with open('models/tfidf_vectorizer.pkl', 'rb') as f:
+        with open('tfidf_vectorizer.pkl', 'rb') as f:
             vectorizer = pickle.load(f)
-        with open('models/naive_bayes_model.pkl', 'rb') as f:
+        with open('naive_bayes_model.pkl', 'rb') as f:
             nb_model = pickle.load(f)
-        with open('models/svm_model.pkl', 'rb') as f:
+        with open('svm_model.pkl', 'rb') as f:
             svm_model = pickle.load(f)
         return vectorizer, nb_model, svm_model
     except Exception as e:
