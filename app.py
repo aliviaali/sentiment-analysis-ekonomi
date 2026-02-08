@@ -1,6 +1,7 @@
 import streamlit as st
 import pickle
 import re
+import os
 import pandas as pd
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
@@ -69,19 +70,39 @@ stemmer, stopwords = load_sastrawi()
 @st.cache_resource
 def load_models():
     try:
-        with open('tfidf_vectorizer.pkl', 'rb') as f:
+        # Cek file di root atau di folder models/
+        paths = {
+            'vectorizer': ['tfidf_vectorizer.pkl', 'models/tfidf_vectorizer.pkl'],
+            'nb': ['naive_bayes_model.pkl', 'models/naive_bayes_model.pkl'],
+            'svm': ['svm_model.pkl', 'models/svm_model.pkl']
+        }
+        
+        # Cari file
+        files = {}
+        for key, candidates in paths.items():
+            for path in candidates:
+                if os.path.exists(path):
+                    files[key] = path
+                    break
+        
+        if len(files) != 3:
+            st.error("❌ Model files tidak lengkap!")
+            return None, None, None
+        
+        # Load
+        with open(files['vectorizer'], 'rb') as f:
             vectorizer = pickle.load(f)
-        with open('naive_bayes_model.pkl', 'rb') as f:
+        with open(files['nb'], 'rb') as f:
             nb_model = pickle.load(f)
-        with open('svm_model.pkl', 'rb') as f:
+        with open(files['svm'], 'rb') as f:
             svm_model = pickle.load(f)
+        
+        st.success("✅ Models loaded!")
         return vectorizer, nb_model, svm_model
+        
     except Exception as e:
-        st.error(f"Error loading models: {str(e)}")
-        st.info("Pastikan folder 'models' berisi file model yang diperlukan")
+        st.error(f"Error: {str(e)}")
         return None, None, None
-
-vectorizer, nb_model, svm_model = load_models()
 
 # Preprocessing function
 def preprocess_text(text):
