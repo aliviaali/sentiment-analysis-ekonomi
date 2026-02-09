@@ -1,11 +1,11 @@
 import streamlit as st
 import pickle
 import re
-import os
 import pandas as pd
+import numpy as np
+import os
 from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
-import plotly.graph_objects as go
 import plotly.express as px
 
 # Konfigurasi halaman
@@ -31,14 +31,6 @@ st.markdown("""
         text-align: center;
         color: #666;
         margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin: 10px 0;
     }
     .stButton>button {
         width: 100%;
@@ -70,39 +62,62 @@ stemmer, stopwords = load_sastrawi()
 @st.cache_resource
 def load_models():
     try:
-        # Cek file di root atau di folder models/
-        paths = {
+        # Cek apakah file ada di root directory atau di folder models/
+        model_files = {
             'vectorizer': ['tfidf_vectorizer.pkl', 'models/tfidf_vectorizer.pkl'],
             'nb': ['naive_bayes_model.pkl', 'models/naive_bayes_model.pkl'],
             'svm': ['svm_model.pkl', 'models/svm_model.pkl']
         }
         
-        # Cari file
-        files = {}
-        for key, candidates in paths.items():
-            for path in candidates:
-                if os.path.exists(path):
-                    files[key] = path
-                    break
+        vectorizer_path = None
+        nb_path = None
+        svm_path = None
         
-        if len(files) != 3:
-            st.error("❌ Model files tidak lengkap!")
+        # Cari file vectorizer
+        for path in model_files['vectorizer']:
+            if os.path.exists(path):
+                vectorizer_path = path
+                break
+        
+        # Cari file naive bayes
+        for path in model_files['nb']:
+            if os.path.exists(path):
+                nb_path = path
+                break
+        
+        # Cari file svm
+        for path in model_files['svm']:
+            if os.path.exists(path):
+                svm_path = path
+                break
+        
+        if not all([vectorizer_path, nb_path, svm_path]):
+            st.error("❌ Model files tidak ditemukan!")
+            st.info("""
+            File model yang dibutuhkan:
+            - tfidf_vectorizer.pkl
+            - naive_bayes_model.pkl
+            - svm_model.pkl
+            
+            Pastikan file-file ini ada di repository GitHub Anda.
+            """)
             return None, None, None
         
-        # Load
-        with open(files['vectorizer'], 'rb') as f:
+        # Load models
+        with open(vectorizer_path, 'rb') as f:
             vectorizer = pickle.load(f)
-        with open(files['nb'], 'rb') as f:
+        with open(nb_path, 'rb') as f:
             nb_model = pickle.load(f)
-        with open(files['svm'], 'rb') as f:
+        with open(svm_path, 'rb') as f:
             svm_model = pickle.load(f)
         
-        st.success("✅ Models loaded!")
         return vectorizer, nb_model, svm_model
         
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"❌ Error loading models: {str(e)}")
         return None, None, None
+
+vectorizer, nb_model, svm_model = load_models()
 
 # Preprocessing function
 def preprocess_text(text):
@@ -124,11 +139,11 @@ def preprocess_text(text):
     
     return text
 
-# Prediction function
+# Prediction function - UPDATED dengan probabilitas untuk SVM
 def predict_sentiment(text, model_type='svm'):
     """Prediksi sentimen dari teks"""
     if vectorizer is None or nb_model is None or svm_model is None:
-        return None, None
+        return None, None, None
     
     cleaned_text = preprocess_text(text)
     text_tfidf = vectorizer.transform([cleaned_text])
@@ -138,9 +153,23 @@ def predict_sentiment(text, model_type='svm'):
         proba = nb_model.predict_proba(text_tfidf)[0]
         labels = nb_model.classes_
     else:
+        # SVM prediction
         prediction = svm_model.predict(text_tfidf)[0]
-        proba = None
-        labels = None
+        
+        # Get decision function scores untuk SVM
+        try:
+            decision_scores = svm_model.decision_function(text_tfidf)[0]
+            labels = svm_model.classes_
+            
+            # Convert decision scores to pseudo-probabilities using softmax
+            # Ini memberikan confidence score untuk setiap class
+            exp_scores = np.exp(decision_scores - np.max(decision_scores))
+            proba = exp_scores / exp_scores.sum()
+            
+        except:
+            # Fallback jika decision_function tidak tersedia
+            proba = None
+            labels = None
     
     return prediction, proba, labels
 
@@ -167,7 +196,6 @@ st.markdown('<p class="sub-header">Klasifikasi Sentimen Berita CNBC Indonesia me
 
 # Sidebar
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/news.png", width=100)
     st.title("⚙️ Pengaturan")
     
     model_choice = st.radio(
@@ -186,6 +214,7 @@ with st.sidebar:
         - Akurasi tinggi (>85%)
         - Robust untuk text classification
         - Optimal untuk dataset ini
+        - Menggunakan decision function untuk confidence score
         """)
     else:
         st.info("""
@@ -193,26 +222,15 @@ with st.sidebar:
         - Cepat dan efisien
         - Probabilistik
         - Cocok untuk baseline
+        - Memberikan probabilitas langsung
         """)
     
     st.markdown("---")
     
-    st.markdown("### 📈 Metrik Performa")
+    st.markdown("### 📈 Info")
     st.metric("Dataset", "9,819 berita")
-    st.metric("Akurasi Target", "> 85%")
-    
-    st.markdown("---")
-    
-    st.markdown("### 👨‍💻 Developer")
-    st.markdown("""
-    Dibuat untuk analisis sentimen berita ekonomi dan bisnis Indonesia.
-    
-    **Tech Stack:**
-    - Python 3.8+
-    - Scikit-learn
-    - Sastrawi
-    - Streamlit
-    """)
+    st.metric("Akurasi SVM", ">85%")
+    st.metric("Akurasi NB", "~82%")
 
 # Main content
 tab1, tab2, tab3 = st.tabs(["🔍 Prediksi Tunggal", "📊 Prediksi Batch", "ℹ️ Informasi"])
@@ -271,35 +289,75 @@ with tab1:
                 
                 st.markdown("---")
                 
-                # Show probability if available (Naive Bayes)
+                # Show probability/confidence chart - UNTUK SEMUA MODEL
                 if proba is not None and labels is not None:
-                    st.subheader("📊 Distribusi Probabilitas")
+                    # Tentukan judul berdasarkan model
+                    if model_type == 'svm':
+                        chart_title = "📊 Confidence Score (SVM Decision Function)"
+                        chart_subtitle = "Skor kepercayaan dari SVM berdasarkan decision function"
+                    else:
+                        chart_title = "📊 Distribusi Probabilitas (Naive Bayes)"
+                        chart_subtitle = "Probabilitas untuk setiap kategori sentimen"
                     
+                    st.subheader(chart_title)
+                    st.caption(chart_subtitle)
+                    
+                    # Buat dataframe untuk chart
                     prob_df = pd.DataFrame({
                         'Sentimen': [l.capitalize() for l in labels],
-                        'Probabilitas': proba * 100
-                    }).sort_values('Probabilitas', ascending=False)
+                        'Score': proba * 100
+                    }).sort_values('Score', ascending=False)
                     
+                    # Create bar chart
                     fig = px.bar(
                         prob_df, 
                         x='Sentimen', 
-                        y='Probabilitas',
+                        y='Score',
                         color='Sentimen',
                         color_discrete_map={
                             'Positif': '#4CAF50',
                             'Netral': '#2196F3',
                             'Negatif': '#F44336'
                         },
-                        text='Probabilitas'
+                        text='Score'
                     )
-                    fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+                    
+                    fig.update_traces(
+                        texttemplate='%{text:.1f}%', 
+                        textposition='outside',
+                        textfont=dict(size=14, weight='bold')
+                    )
+                    
                     fig.update_layout(
                         showlegend=False,
                         height=400,
-                        yaxis_title="Probabilitas (%)",
-                        xaxis_title=""
+                        yaxis_title="Score (%)" if model_type == 'svm' else "Probabilitas (%)",
+                        xaxis_title="",
+                        font=dict(size=12),
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        yaxis=dict(
+                            gridcolor='lightgray',
+                            range=[0, max(proba * 100) * 1.15]
+                        )
                     )
+                    
                     st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Tampilkan nilai detail
+                    st.markdown("### 📋 Detail Score:")
+                    cols = st.columns(3)
+                    for idx, (sentiment, score) in enumerate(zip(prob_df['Sentimen'], prob_df['Score'])):
+                        with cols[idx]:
+                            sentiment_lower = sentiment.lower()
+                            emoji = get_sentiment_emoji(sentiment_lower)
+                            color = get_sentiment_color(sentiment_lower)
+                            
+                            st.markdown(f"""
+                            <div style='background-color: {color}20; padding: 15px; border-radius: 10px; border-left: 4px solid {color};'>
+                                <h4 style='margin: 0; color: {color};'>{emoji} {sentiment}</h4>
+                                <h2 style='margin: 5px 0; color: {color};'>{score:.2f}%</h2>
+                            </div>
+                            """, unsafe_allow_html=True)
                 
                 # Preprocessing info
                 with st.expander("🔧 Detail Preprocessing"):
@@ -309,6 +367,15 @@ with tab1:
                     st.markdown(f"**Teks Setelah Preprocessing:**")
                     st.text(cleaned)
                     st.caption(f"Jumlah kata: {len(user_input.split())} → {len(cleaned.split())}")
+                    
+                    # Info tambahan untuk SVM
+                    if model_type == 'svm':
+                        st.info("""
+                        **Note tentang SVM Confidence Score:**
+                        - SVM menggunakan decision function, bukan probabilitas murni
+                        - Score dikonversi menggunakan softmax untuk visualisasi
+                        - Score tinggi = confidence tinggi untuk class tersebut
+                        """)
 
 # Tab 2: Batch Prediction
 with tab2:
@@ -421,81 +488,75 @@ with tab2:
 with tab3:
     st.header("ℹ️ Informasi Aplikasi")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📖 Tentang Aplikasi")
-        st.markdown("""
-        Aplikasi ini menggunakan **Machine Learning** untuk mengklasifikasikan sentimen berita 
-        ekonomi dan bisnis dari CNBC Indonesia ke dalam tiga kategori:
-        
-        - **Positif** 😊: Berita dengan sentimen positif
-        - **Netral** 😐: Berita dengan sentimen netral
-        - **Negatif** 😞: Berita dengan sentimen negatif
-        
-        ### 🎯 Metode yang Digunakan
-        
-        1. **Naive Bayes (Multinomial)**
-           - Algoritma probabilistik
-           - Cepat dan efisien
-           - Cocok untuk text classification
-        
-        2. **SVM (Support Vector Machine)**
-           - Linear kernel
-           - Akurasi tinggi (>85%)
-           - Optimal untuk dataset ini
-        
-        ### 🔧 Preprocessing
-        
-        - **Tokenization**: Memecah teks menjadi kata-kata
-        - **Stopwords Removal**: Menghapus kata-kata umum
-        - **Stemming**: Mengubah kata ke bentuk dasar (Sastrawi)
-        - **TF-IDF**: Feature extraction dengan n-gram (1-3)
-        """)
-    
-    with col2:
-        st.subheader("📊 Dataset")
-        st.markdown("""
-        - **Sumber**: Dataset CNBC Indonesia
-        - **Total Data**: 9,819 berita
-        - **Periode**: 2024
-        - **Distribusi**:
-          - Netral: 4,356 (44.4%)
-          - Positif: 2,887 (29.4%)
-          - Negatif: 2,576 (26.2%)
-        
-        ### 🎓 Performa Model
-        
-        | Model | Accuracy | Precision | Recall | F1-Score |
-        |-------|----------|-----------|--------|----------|
-        | Naive Bayes | ~82% | ~81% | ~82% | ~81% |
-        | **SVM** | **>85%** | **>84%** | **>85%** | **>84%** |
-        
-        ### 🚀 Teknologi
-        
-        - **Python 3.8+**
-        - **Scikit-learn**: Machine learning framework
-        - **Sastrawi**: Indonesian NLP library
-        - **Streamlit**: Web framework
-        - **Plotly**: Interactive visualization
-        
-        ### 📝 Cara Penggunaan
-        
-        1. Pilih model di sidebar (SVM atau Naive Bayes)
-        2. Masukkan teks berita di tab "Prediksi Tunggal"
-        3. Klik tombol "Analisis Sentimen"
-        4. Lihat hasil prediksi dan probabilitas
-        
-        Untuk analisis batch, upload file CSV dengan kolom 'judul'.
-        """)
-    
-    st.markdown("---")
-    
-    st.subheader("📞 Kontak & Kontribusi")
     st.markdown("""
-    - **GitHub**: [Repository Project](https://github.com/yourusername/sentiment-analysis)
-    - **Issues**: Laporkan bug atau request fitur
-    - **Pull Request**: Kontribusi kode sangat diterima!
+    ### 📖 Tentang Aplikasi
+    
+    Aplikasi ini menggunakan **Machine Learning** untuk mengklasifikasikan sentimen berita 
+    ekonomi dan bisnis dari CNBC Indonesia ke dalam tiga kategori:
+    
+    - **Positif** 😊: Berita dengan sentimen positif
+    - **Netral** 😐: Berita dengan sentimen netral
+    - **Negatif** 😞: Berita dengan sentimen negatif
+    
+    ### 🎯 Metode yang Digunakan
+    
+    1. **Naive Bayes (Multinomial)**
+       - Algoritma probabilistik yang cepat dan efisien
+       - Memberikan probabilitas langsung untuk setiap class
+       - Cocok untuk text classification baseline
+    
+    2. **SVM (Support Vector Machine)**
+       - Linear kernel dengan akurasi tinggi (>85%)
+       - Menggunakan decision function untuk confidence score
+       - Optimal untuk dataset ini
+    
+    ### 📊 Visualisasi Score
+    
+    - **Naive Bayes**: Menampilkan probabilitas asli dari model
+    - **SVM**: Menampilkan confidence score dari decision function (dikonversi dengan softmax)
+    
+    ### 🔧 Preprocessing
+    
+    - **Tokenization**: Memecah teks menjadi kata-kata
+    - **Stopwords Removal**: Menghapus kata-kata umum bahasa Indonesia
+    - **Stemming**: Mengubah kata ke bentuk dasar menggunakan Sastrawi
+    - **TF-IDF**: Feature extraction dengan n-gram (1-3)
+    
+    ### 📊 Dataset
+    
+    - **Total Data**: 9,819 berita CNBC Indonesia
+    - **Periode**: Tahun 2024
+    - **Distribusi**: 
+      - Netral: 4,356 (44.4%)
+      - Positif: 2,887 (29.4%)
+      - Negatif: 2,576 (26.2%)
+    
+    ### 🎓 Performa Model
+    
+    | Model | Accuracy | Precision | Recall | F1-Score |
+    |-------|----------|-----------|--------|----------|
+    | Naive Bayes | ~82% | ~81% | ~82% | ~81% |
+    | **SVM** | **>85%** | **>84%** | **>85%** | **>84%** |
+    
+    ### 🚀 Tech Stack
+    
+    - **Python 3.8+**
+    - **Scikit-learn**: Machine learning framework
+    - **Sastrawi**: Indonesian NLP library
+    - **Streamlit**: Web application framework
+    - **Plotly**: Interactive data visualization
+    - **NumPy & Pandas**: Data processing
+    
+    ### 📝 Cara Penggunaan
+    
+    1. Pilih model di sidebar (SVM atau Naive Bayes)
+    2. Masukkan teks berita di tab "Prediksi Tunggal"
+    3. Klik tombol "Analisis Sentimen"
+    4. Lihat hasil prediksi dan chart confidence/probability
+    
+    Untuk analisis batch, upload file CSV dengan kolom 'judul'.
+    
+    ---
     
     Dikembangkan dengan ❤️ menggunakan Python dan Streamlit
     """)
@@ -505,6 +566,6 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p>© 2024 Analisis Sentimen Berita CNBC Indonesia</p>
-    <p>Dibuat dengan Streamlit • Python • Machine Learning</p>
+    <p>Naive Bayes & SVM • Streamlit • Python • Machine Learning</p>
 </div>
 """, unsafe_allow_html=True)
